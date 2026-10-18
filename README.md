@@ -52,8 +52,23 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_ANON_KEY
 
 7. Simpan, hentikan server (`Ctrl+C`), lalu jalankan kembali `npm run dev`.
 8. Buat akun melalui form pendaftaran. Jika verifikasi email aktif, verifikasi email sebelum login.
+9. Di dashboard Supabase buka **Authentication > URL Configuration**:
+   - Atur **Site URL** ke `https://digreva-finance.vercel.app/`.
+   - Di **Redirect URLs**, tambahkan `http://localhost:3000/` untuk pengembangan lokal.
+   - Tambahkan juga `https://digreva-finance.vercel.app/` untuk deployment produksi.
+   Aplikasi mengarahkan tautan reset password kembali ke origin situs yang sedang digunakan. URL redirect harus cocok dengan domain lokal atau produksi yang sudah diizinkan Supabase.
+10. Pengguna dapat memilih **Lupa password?** di halaman login, lalu membuka tautan email untuk mengatur password baru.
 
 Jangan pernah menggunakan `service_role` key di frontend atau mengunggah `.env.local` ke GitHub.
+
+### Verifikasi penyimpanan cloud
+
+- Migration membuat tabel `transactions`, `projects`, dan `accounts`; kebijakan RLS mengisolasi setiap baris berdasarkan `auth.uid()`.
+- Tipe transaksi yang didukung di database adalah `income` dan `expense` sesuai schema. Transfer antar rekening belum digunakan karena starter ini tidak memiliki tabel atau validasi untuk transfer internal.
+- Invoice/piutang saat ini merupakan ringkasan yang dihitung dari nilai proyek dan pembayaran, bukan tabel invoice tersendiri.
+- Setelah login, tambahkan transaksi uji. Pastikan pesan berhasil muncul, baris terlihat di Supabase **Table Editor**, lalu muat ulang aplikasi untuk memastikan baris dibaca kembali.
+- Jika pembacaan atau penulisan gagal, aplikasi menampilkan tabel dan pesan/kode error Supabase. Jalankan migration pada proyek Supabase yang sama dengan URL dan anon key di environment deployment.
+- Data yang sebelumnya hanya tersimpan di `localStorage` tidak otomatis dipindahkan ke cloud. Ekspor atau salin data tersebut sebelum berpindah mode.
 
 ## Struktur folder
 

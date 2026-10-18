@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Activity, ArrowDownLeft, ArrowDownRight, ArrowLeftRight, ArrowUpRight, BriefcaseBusiness, CalendarDays, ChartNoAxesCombined, Check, ChevronDown, CircleDollarSign, Download, FileText, Filter, FolderKanban, LayoutDashboard, LogIn, LogOut, Menu, Plus, ReceiptText, Search, Settings, ShieldCheck, Trash2, TrendingDown, TrendingUp, Wallet, X } from 'lucide-react';
+import { Activity, ArrowDownLeft, ArrowDownRight, ArrowLeft, ArrowLeftRight, ArrowUpRight, BriefcaseBusiness, CalendarDays, ChartNoAxesCombined, Check, ChevronDown, CircleDollarSign, Download, FileText, Filter, FolderKanban, LayoutDashboard, LogIn, LogOut, Mail, Menu, Plus, ReceiptText, Search, Settings, ShieldCheck, Trash2, TrendingDown, TrendingUp, Wallet, X } from 'lucide-react';
 
-type TxType = 'income' | 'expense' | 'transfer';
+type TxType = 'income' | 'expense';
 type Transaction = { id: string; date: string; type: TxType; category: string; description: string; amount: number; method: string; account: string; client: string; project: string; reference: string; notes: string; created_at?: string };
 type Project = { id: string; name: string; client: string; service: string; price: number; paid: number; cost: number; start: string; due: string; status: string; progress: number };
 type Account = { id: string; name: string; opening: number; kind: string };
@@ -26,9 +26,32 @@ const INCOME_CATS = ['DP proyek','Pelunasan proyek','Animasi 2D','Animasi 3D','M
 const EXPENSE_CATS = ['Gaji dan freelancer','Software dan langganan','Marketing dan iklan','Internet dan komunikasi','Peralatan kerja','Operasional','Biaya produksi proyek','Pajak dan administrasi','Pengeluaran lainnya'];
 const NAV = [{id:'dashboard',label:'Dashboard',icon:LayoutDashboard},{id:'transactions',label:'Transaksi',icon:ArrowLeftRight},{id:'projects',label:'Proyek Klien',icon:FolderKanban},{id:'invoices',label:'Invoice & Piutang',icon:ReceiptText},{id:'accounts',label:'Kas & Rekening',icon:Wallet},{id:'reports',label:'Laporan Keuangan',icon:ChartNoAxesCombined},{id:'settings',label:'Pengaturan',icon:Settings}];
 const idr = (n:number) => new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number.isFinite(n)?n:0);
+const supabaseErrorMessage = (error:{message:string;code?:string;details?:string;hint?:string}) => [error.message,error.code&&`Kode: ${error.code}`,error.details,error.hint&&`Petunjuk: ${error.hint}`].filter(Boolean).join(' — ');
 const shortDate = (s:string) => { if(!s)return '-'; return new Date(`${s}T00:00:00`).toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric'}); };
 const newId = () => typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const emptyForm = (): Omit<Transaction,'id'> => ({date:new Date().toLocaleDateString('en-CA'),type:'income',category:INCOME_CATS[0],description:'',amount:0,method:'Transfer bank',account:'SeaBank',client:'',project:'',reference:'',notes:''});
+
+function AuthLayout({ children }: { children: ReactNode }) {
+  return <main className="auth-screen">
+    <div className="auth-layout">
+      <aside className="auth-visual">
+        <div className="brand auth-brand"><div className="brand-mark">D</div><div><strong>DIGREVA Finance</strong><small>Finance Management System</small></div></div>
+        <div className="auth-visual-copy">
+          <div className="auth-visual-badge"><ShieldCheck size={15}/> Ruang kerja keuangan Anda</div>
+          <h1>Keuangan bisnis <span>lebih terkendali.</span></h1>
+          <p>Kelola transaksi, proyek, dan arus kas DIGREVA dalam satu dashboard yang rapi dan mudah dipahami.</p>
+          <div className="auth-visual-points">
+            <div><Check size={15}/><span>Ringkasan keuangan dalam satu tempat</span></div>
+            <div><Check size={15}/><span>Akses aman dengan akun Anda</span></div>
+          </div>
+        </div>
+        <div className="auth-visual-bottom"><span><Activity size={14}/> DIGREVA FINANCE</span><span>Kelola lebih tenang.</span></div>
+      </aside>
+      <section className="auth-panel">{children}</section>
+    </div>
+    <footer className="auth-copyright">© {new Date().getFullYear()} DIGREVA Finance · Keuangan usaha lebih terkontrol</footer>
+  </main>;
+}
 
 export default function Home() {
   const [section,setSection] = useState('dashboard');
@@ -37,13 +60,20 @@ export default function Home() {
   const [accounts,setAccounts] = useState<Account[]>(DEFAULT_ACCOUNTS);
   const [loaded,setLoaded] = useState(false);
   const [isDemo,setIsDemo] = useState(true);
+  const [cloudMode,setCloudMode] = useState(false);
   const [userEmail,setUserEmail] = useState('Mode demo');
   const [authReady,setAuthReady] = useState(false);
-  const [authMode,setAuthMode] = useState<'login'|'signup'>('login');
+  const [authMode,setAuthMode] = useState<'login'|'signup'|'forgot'>('login');
   const [authEmail,setAuthEmail] = useState('');
   const [authPassword,setAuthPassword] = useState('');
+  const [isPasswordRecovery,setIsPasswordRecovery] = useState(false);
+  const [newPassword,setNewPassword] = useState('');
+  const [confirmPassword,setConfirmPassword] = useState('');
   const [authError,setAuthError] = useState('');
   const [authMessage,setAuthMessage] = useState('');
+  const [authSubmitting,setAuthSubmitting] = useState(false);
+  const [cloudLoadError,setCloudLoadError] = useState('');
+  const [cloudLoading,setCloudLoading] = useState(false);
   const [query,setQuery] = useState('');
   const [typeFilter,setTypeFilter] = useState('all');
   const [categoryFilter,setCategoryFilter] = useState('all');
@@ -63,56 +93,104 @@ export default function Home() {
       const tx = localStorage.getItem('digreva_transactions_v1');
       const pr = localStorage.getItem('digreva_projects_v1');
       const ac = localStorage.getItem('digreva_accounts_v1');
+      const hasStoredData = tx !== null || pr !== null || ac !== null;
+
       setTransactions(tx ? JSON.parse(tx) : DEMO_TX);
       setProjects(pr ? JSON.parse(pr) : DEMO_PROJECTS);
       setAccounts(ac ? JSON.parse(ac) : DEFAULT_ACCOUNTS);
-      setIsDemo(!tx);
+      setIsDemo(!hasStoredData);
     } catch { setTransactions(DEMO_TX); setProjects(DEMO_PROJECTS); setAccounts(DEFAULT_ACCOUNTS); setIsDemo(true); }
   },[]);
 
   useEffect(() => {
     let alive = true;
+    let recoveringPassword = false;
+    let unsubscribeAuth: (() => void) | undefined;
     async function init() {
       if (supabase) {
+        const { data: subscription } = supabase.auth.onAuthStateChange((event,session) => {
+          if (!alive || event === 'INITIAL_SESSION') return;
+          if (event === 'PASSWORD_RECOVERY') {
+            recoveringPassword = true;
+            setIsPasswordRecovery(true);
+            return;
+          }
+          if (session) { setCloudMode(true); setUserEmail(session.user.email || 'Pengguna'); void loadCloudData(); }
+          else { setCloudMode(false); setUserEmail('Mode demo'); setAuthReady(true); }
+        });
+        unsubscribeAuth = () => subscription.subscription.unsubscribe();
         const { data } = await supabase.auth.getSession();
         if (!alive) return;
         if (data.session) {
+          setCloudMode(true);
           setUserEmail(data.session.user.email || 'Pengguna');
-          await loadCloudData();
+          if (recoveringPassword) setAuthReady(true);
+          else await loadCloudData();
         } else {
+          setCloudMode(false);
           setAuthReady(true);
         }
-        supabase.auth.onAuthStateChange((_event,session) => {
-          if (session) { setUserEmail(session.user.email || 'Pengguna'); void loadCloudData(); }
-          else { setUserEmail('Mode demo'); setAuthReady(true); }
-        });
       } else {
         refreshFromStorage(); setAuthReady(true); setLoaded(true);
       }
     }
     void init();
-    return () => { alive = false; };
+    return () => { alive = false; unsubscribeAuth?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[refreshFromStorage]);
 
   const loadCloudData = async () => {
-    if (!supabase) return;
-    const [{data:tx,error:txErr},{data:pr,error:prErr},{data:ac,error:acErr}] = await Promise.all([
-      supabase.from('transactions').select('*').order('date',{ascending:false}),
-      supabase.from('projects').select('*').order('created_at',{ascending:false}),
-      supabase.from('accounts').select('*').order('created_at',{ascending:true}),
-    ]);
-    if (txErr || prErr || acErr) { setError('Gagal memuat data Supabase. Periksa migration SQL dan kebijakan RLS.'); setAuthReady(true); return; }
-    setTransactions((tx || []).map((r:any)=>({id:r.id,date:r.date,type:r.type,category:r.category,description:r.description,amount:Number(r.amount),method:r.method || 'Transfer bank',account:r.account_name || '',client:r.client_name || '',project:r.project_name || '',reference:r.reference || '',notes:r.notes || ''})));
-    setProjects((pr || []).map((r:any)=>({id:r.id,name:r.name,client:r.client_name || '',service:r.service || '',price:Number(r.price || 0),paid:Number(r.paid || 0),cost:Number(r.cost || 0),start:r.start_date || '',due:r.due_date || '',status:r.status || 'Prospek',progress:Number(r.progress || 0)})));
-    setAccounts((ac || []).map((r:any)=>({id:r.id,name:r.name,opening:Number(r.opening_balance || 0),kind:r.kind || 'Rekening bank'})));
-    setIsDemo(false); setAuthReady(true); setLoaded(true); setError('');
+    if (!supabase) return false;
+    setCloudLoading(true);
+    setCloudLoadError('');
+    try {
+      const [{data:tx,error:txErr},{data:pr,error:prErr},{data:ac,error:acErr}] = await Promise.all([
+        supabase.from('transactions').select('*').order('date',{ascending:false}),
+        supabase.from('projects').select('*').order('created_at',{ascending:false}),
+        supabase.from('accounts').select('*').order('created_at',{ascending:true}),
+      ]);
+      const failures = [
+        {table:'transactions',error:txErr},
+        {table:'projects',error:prErr},
+        {table:'accounts',error:acErr},
+      ].map(({table,error:queryError})=>queryError?`${table}: ${supabaseErrorMessage(queryError)}`:null).filter((message):message is string=>message!==null);
+      if (failures.length) {
+        setTransactions([]);
+        setProjects([]);
+        setAccounts([]);
+        setIsDemo(false);
+        setCloudLoadError(`Gagal memuat data Supabase — ${failures.join(' · ')}. Pastikan supabase/migration.sql sudah dijalankan dan kebijakan RLS aktif.`);
+        setAuthReady(true);
+        return false;
+      }
+      setTransactions((tx || []).map((r:any)=>({id:r.id,date:r.date,type:r.type,category:r.category,description:r.description,amount:Number(r.amount),method:r.method || 'Transfer bank',account:r.account_name || '',client:r.client_name || '',project:r.project_name || '',reference:r.reference || '',notes:r.notes || ''})));
+      setProjects((pr || []).map((r:any)=>({id:r.id,name:r.name,client:r.client_name || '',service:r.service || '',price:Number(r.price || 0),paid:Number(r.paid || 0),cost:Number(r.cost || 0),start:r.start_date || '',due:r.due_date || '',status:r.status || 'Prospek',progress:Number(r.progress || 0)})));
+      setAccounts((ac || []).map((r:any)=>({id:r.id,name:r.name,opening:Number(r.opening_balance || 0),kind:r.kind || 'Rekening bank'})));
+      setIsDemo(false); setAuthReady(true); setLoaded(true); setError('');
+      setCloudLoadError('');
+      return true;
+    } catch (loadError) {
+      setTransactions([]);
+      setProjects([]);
+      setAccounts([]);
+      setIsDemo(false);
+      setCloudLoadError(loadError instanceof Error ? `Gagal memuat data Supabase: ${loadError.message}` : 'Gagal memuat data Supabase karena kesalahan koneksi yang tidak diketahui.');
+      setAuthReady(true);
+      return false;
+    } finally {
+      setCloudLoading(false);
+    }
   };
 
   const saveLocal = (tx:Transaction[],pr=projects,ac=accounts) => {
-    localStorage.setItem('digreva_transactions_v1',JSON.stringify(tx));
-    localStorage.setItem('digreva_projects_v1',JSON.stringify(pr));
-    localStorage.setItem('digreva_accounts_v1',JSON.stringify(ac));
+    if (typeof window === 'undefined' || !('localStorage' in window)) return;
+    try {
+      localStorage.setItem('digreva_transactions_v1',JSON.stringify(tx));
+      localStorage.setItem('digreva_projects_v1',JSON.stringify(pr));
+      localStorage.setItem('digreva_accounts_v1',JSON.stringify(ac));
+    } catch {
+      setError('Browser storage penuh atau tidak dapat diakses. Hapus data lama atau gunakan mode cloud.');
+    }
   };
   const persistTx = async (tx:Transaction[]) => {
     setTransactions(tx);
@@ -137,14 +215,129 @@ export default function Home() {
   const categories = [...new Set(transactions.map(t=>t.category))];
 
   const signIn = async () => {
+    if (authSubmitting) return;
     setAuthError('');setAuthMessage('');
+    const email = authEmail.trim();
+    const password = authPassword;
+
+    if (!email) {
+      setAuthError('Email wajib diisi.');
+      return;
+    }
+    if (!password) {
+      setAuthError('Password wajib diisi.');
+      return;
+    }
+    if (authMode === 'signup' && password.length < 6) {
+      setAuthError('Password minimal 6 karakter.');
+      return;
+    }
     if (!supabase) { setAuthError('Supabase belum dikonfigurasi. Isi .env.local terlebih dahulu.');return; }
-    const result = authMode==='login' ? await supabase.auth.signInWithPassword({email:authEmail,password:authPassword}) : await supabase.auth.signUp({email:authEmail,password:authPassword});
-    if (result.error) setAuthError(result.error.message);
-    else if (authMode==='signup'&&!result.data.session) setAuthMessage('Akun dibuat. Periksa email untuk verifikasi, lalu login.');
-    else {setUserEmail(authEmail);await loadCloudData();}
+
+    setAuthEmail(email);
+    setAuthSubmitting(true);
+
+    try {
+      if (authMode === 'login') {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) {
+          setAuthError(error.message);
+          return;
+        }
+        setCloudMode(true);
+        setUserEmail(data.user?.email || email);
+        await loadCloudData();
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) {
+        setAuthError(error.message);
+        return;
+      }
+      if (!data.session) {
+        setAuthMessage('Akun dibuat. Periksa email untuk verifikasi, lalu login.');
+        return;
+      }
+      setCloudMode(true);
+      setUserEmail(data.user?.email || email);
+      await loadCloudData();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Tidak dapat terhubung ke Supabase. Coba lagi.');
+    } finally {
+      setAuthSubmitting(false);
+    }
   };
-  const signOut = async () => { if(supabase) await supabase.auth.signOut(); setUserEmail('Mode demo');setAuthReady(true);refreshFromStorage(); };
+  const requestPasswordReset = async () => {
+    if (authSubmitting) return;
+    setAuthError('');setAuthMessage('');
+    const email = authEmail.trim();
+    if (!email) {
+      setAuthError('Email wajib diisi.');
+      return;
+    }
+    if (!supabase) {
+      setAuthError('Supabase belum dikonfigurasi. Isi .env.local terlebih dahulu.');
+      return;
+    }
+
+    setAuthSubmitting(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/`,
+      });
+      if (error) {
+        setAuthError(error.message);
+        return;
+      }
+      setAuthEmail(email);
+      setAuthMessage('Jika email terdaftar, tautan untuk mengatur ulang password akan dikirim. Periksa kotak masuk dan folder spam.');
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Tidak dapat mengirim email reset password. Coba lagi.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+  const updatePassword = async () => {
+    if (authSubmitting) return;
+    setAuthError('');setAuthMessage('');
+    if (!newPassword) {
+      setAuthError('Password baru wajib diisi.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setAuthError('Password minimal 6 karakter.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setAuthError('Konfirmasi password tidak cocok.');
+      return;
+    }
+    if (!supabase) {
+      setAuthError('Supabase belum dikonfigurasi. Isi .env.local terlebih dahulu.');
+      return;
+    }
+
+    setAuthSubmitting(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        setAuthError(error.message);
+        return;
+      }
+      setIsPasswordRecovery(false);
+      setNewPassword('');
+      setConfirmPassword('');
+      setAuthMessage('');
+      setAuthReady(true);
+      setNotice('Password berhasil diperbarui.');
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Tidak dapat memperbarui password. Coba lagi.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+  const signOut = async () => { if(supabase) await supabase.auth.signOut(); setCloudMode(false);setUserEmail('Mode demo');setAuthReady(true);refreshFromStorage(); };
 
   const openNewTransaction = () => {setEditingId(null);setForm(emptyForm());setError('');setNotice('');setModalOpen(true);};
   const openEditTransaction = (t:Transaction) => {setEditingId(t.id);const {id,...rest}=t;setForm(rest);setError('');setNotice('');setModalOpen(true);};
@@ -152,12 +345,26 @@ export default function Home() {
     if (!form.description.trim()) {setError('Keterangan transaksi wajib diisi.');return;}
     if (!Number.isFinite(Number(form.amount)) || Number(form.amount)<=0) {setError('Nominal harus lebih besar dari nol.');return;}
     if (!form.date) {setError('Tanggal transaksi wajib diisi.');return;}
+    const transactionType = form.type as string;
+    if (!['income','expense'].includes(transactionType)) {
+      setError('Tipe transaksi tidak valid. Gunakan pemasukan atau pengeluaran saja.');
+      return;
+    }
     const item:Transaction={...form,id:editingId || newId(),amount:Math.round(Number(form.amount)),description:form.description.trim()};
-    if (supabase && !isDemo) {
-      const payload={date:item.date,type:item.type,category:item.category,description:item.description,amount:item.amount,method:item.method,account_name:item.account,client_name:item.client,project_name:item.project,reference:item.reference,notes:item.notes};
-      const result = editingId ? await supabase.from('transactions').update(payload).eq('id',editingId) : await supabase.from('transactions').insert(payload);
-      if(result.error){setError(`Gagal menyimpan ke database: ${result.error.message}`);return;}
-      await loadCloudData();
+    if (cloudMode) {
+      if (!supabase) { setError('Sesi Supabase aktif tetapi klien belum dikonfigurasi. Periksa environment variables.');return; }
+      try {
+        const payload={date:item.date,type:item.type,category:item.category,description:item.description,amount:item.amount,method:item.method,account_name:item.account,client_name:item.client,project_name:item.project,reference:item.reference,notes:item.notes};
+        const result = editingId
+          ? await supabase.from('transactions').update(payload).eq('id',editingId).select('id').maybeSingle()
+          : await supabase.from('transactions').insert(payload).select('id').single();
+        if(result.error){setError(`Gagal menyimpan transaksi ke Supabase: ${supabaseErrorMessage(result.error)}`);return;}
+        if(!result.data){setError('Transaksi tidak tersimpan. Baris tidak ditemukan atau akses ditolak oleh kebijakan RLS.');return;}
+        if(!await loadCloudData())return;
+      } catch (saveError) {
+        setError(saveError instanceof Error ? `Gagal menyimpan transaksi ke Supabase: ${saveError.message}` : 'Gagal menyimpan transaksi ke Supabase karena kesalahan yang tidak diketahui.');
+        return;
+      }
     } else {
       const next=editingId?transactions.map(t=>t.id===editingId?item:t):[item,...transactions];
       setTransactions(next);saveLocal(next);setIsDemo(false);
@@ -166,33 +373,98 @@ export default function Home() {
   };
   const deleteTransaction = async (t:Transaction) => {
     if(!window.confirm(`Hapus transaksi “${t.description}”? Tindakan ini tidak dapat dibatalkan.`))return;
-    if(supabase&&!isDemo){const result=await supabase.from('transactions').delete().eq('id',t.id);if(result.error){setError(`Gagal menghapus: ${result.error.message}`);return;}await loadCloudData();}
-    else {const next=transactions.filter(x=>x.id!==t.id);setTransactions(next);saveLocal(next);}
+    if(cloudMode){
+      if(!supabase){setError('Sesi Supabase aktif tetapi klien belum dikonfigurasi. Periksa environment variables.');return;}
+      try{
+        const result=await supabase.from('transactions').delete().eq('id',t.id).select('id').maybeSingle();
+        if(result.error){setError(`Gagal menghapus transaksi dari Supabase: ${supabaseErrorMessage(result.error)}`);return;}
+        if(!result.data){setError('Transaksi tidak dihapus. Baris tidak ditemukan atau akses ditolak oleh kebijakan RLS.');return;}
+        if(!await loadCloudData())return;
+      }catch(deleteError){
+        setError(deleteError instanceof Error?`Gagal menghapus transaksi dari Supabase: ${deleteError.message}`:'Gagal menghapus transaksi karena kesalahan yang tidak diketahui.');
+        return;
+      }
+    } else {const next=transactions.filter(x=>x.id!==t.id);setTransactions(next);saveLocal(next);}
     setNotice('Transaksi dihapus.');
   };
   const saveProject = async (p:Project) => {
-    if(supabase&&!isDemo){const payload={name:p.name,client_name:p.client,service:p.service,price:p.price,paid:p.paid,cost:p.cost,start_date:p.start,due_date:p.due,status:p.status,progress:p.progress};const result=await supabase.from('projects').insert(payload);if(result.error){setError(`Gagal menyimpan proyek: ${result.error.message}`);return;}await loadCloudData();}
+    if(cloudMode){
+      if(!supabase){setError('Sesi Supabase aktif tetapi klien belum dikonfigurasi. Periksa environment variables.');return;}
+      try{
+        const payload={name:p.name,client_name:p.client,service:p.service,price:p.price,paid:p.paid,cost:p.cost,start_date:p.start||null,due_date:p.due||null,status:p.status,progress:p.progress};
+        const result=await supabase.from('projects').insert(payload).select('id').single();
+        if(result.error){setError(`Gagal menyimpan proyek ke Supabase: ${supabaseErrorMessage(result.error)}`);return;}
+        if(!await loadCloudData())return;
+      }catch(saveError){
+        setError(saveError instanceof Error?`Gagal menyimpan proyek ke Supabase: ${saveError.message}`:'Gagal menyimpan proyek karena kesalahan yang tidak diketahui.');
+        return;
+      }
+    }
     else {const next=[p,...projects];setProjects(next);saveLocal(transactions,next);setIsDemo(false);}
     setNotice('Proyek berhasil ditambahkan.');
   };
   const addAccount = async () => {
     if(!accountForm.name.trim()){setError('Nama akun wajib diisi.');return;}
     const item:Account={id:newId(),name:accountForm.name.trim(),kind:accountForm.kind,opening:Number(accountForm.opening)||0};
-    if(supabase&&!isDemo){const result=await supabase.from('accounts').insert({name:item.name,kind:item.kind,opening_balance:item.opening});if(result.error){setError(`Gagal menyimpan akun: ${result.error.message}`);return;}await loadCloudData();}
+    if(cloudMode){
+      if(!supabase){setError('Sesi Supabase aktif tetapi klien belum dikonfigurasi. Periksa environment variables.');return;}
+      try{
+        const result=await supabase.from('accounts').insert({name:item.name,kind:item.kind,opening_balance:item.opening}).select('id').single();
+        if(result.error){setError(`Gagal menyimpan rekening ke Supabase: ${supabaseErrorMessage(result.error)}`);return;}
+        if(!await loadCloudData())return;
+      }catch(saveError){
+        setError(saveError instanceof Error?`Gagal menyimpan rekening ke Supabase: ${saveError.message}`:'Gagal menyimpan rekening karena kesalahan yang tidak diketahui.');
+        return;
+      }
+    }
     else {const next=[...accounts,item];setAccounts(next);saveLocal(transactions,projects,next);setIsDemo(false);}
     setAccountModal(false);setAccountForm({name:'',kind:'Rekening bank',opening:'0'});setNotice('Akun berhasil ditambahkan.');
   };
   const exportCSV = () => {const rows=[['Tanggal','Jenis','Kategori','Keterangan','Nominal','Metode','Akun','Klien','Proyek','Referensi','Catatan'],...filteredTx.map(t=>[t.date,t.type,t.category,t.description,t.amount,t.method,t.account,t.client,t.project,t.reference,t.notes])];const csv='\uFEFF'+rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`digreva-transaksi-${new Date().toLocaleDateString('en-CA')}.csv`;a.click();URL.revokeObjectURL(url);};
-  const clearDemo = () => {if(!window.confirm('Hapus data demo dan mulai dari pencatatan kosong?'))return;setTransactions([]);setProjects([]);setAccounts(DEFAULT_ACCOUNTS);saveLocal([],[],DEFAULT_ACCOUNTS);setIsDemo(false);setNotice('Data demo dihapus. Mulai masukkan transaksi asli.');};
+  const clearDemo = () => {
+    if(cloudMode){setError('Data Supabase tidak dihapus melalui tombol data demo. Hapus baris cloud secara eksplisit dari modul terkait.');return;}
+    if(!window.confirm('Hapus data demo dan mulai dari pencatatan kosong?'))return;
+    setTransactions([]);setProjects([]);setAccounts(DEFAULT_ACCOUNTS);saveLocal([],[],DEFAULT_ACCOUNTS);setIsDemo(false);setNotice('Data demo dihapus. Mulai masukkan transaksi asli.');
+  };
 
-  if (isSupabaseConfigured && authReady && userEmail==='Mode demo') return <div className="min-h-screen grid place-items-center p-4"><div className="panel" style={{width:'min(430px,100%)',padding:30}}><div className="brand" style={{padding:0,color:'#172033',marginBottom:28}}><div className="brand-mark">D</div><div><strong>DIGREVA Finance</strong><small style={{color:'#758096'}}>Finance Management System</small></div></div><h2 style={{fontSize:22,margin:'0 0 8px'}}>{authMode==='login'?'Login ke akun':'Buat akun'}</h2><p className="muted small" style={{marginBottom:22}}>Gunakan akun Supabase untuk mengakses data keuangan.</p>{authError&&<div className="notice error">{authError}</div>}{authMessage&&<div className="notice">{authMessage}</div>}<div className="field" style={{marginBottom:13}}><label>Email</label><input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} type="email" placeholder="nama@email.com" /></div><div className="field" style={{marginBottom:18}}><label>Password</label><input value={authPassword} onChange={e=>setAuthPassword(e.target.value)} type="password" placeholder="Minimal 6 karakter" /></div><button className="btn btn-primary" style={{width:'100%',justifyContent:'center'}} onClick={()=>void signIn()}><LogIn size={15}/>{authMode==='login'?'Login':'Daftar akun'}</button><button className="btn" style={{width:'100%',justifyContent:'center',marginTop:10}} onClick={()=>{setAuthMode(authMode==='login'?'signup':'login');setAuthError('');setAuthMessage('');}}>{authMode==='login'?'Belum punya akun? Daftar':'Sudah punya akun? Login'}</button><p className="footer-note">Akun dibuat melalui Supabase Auth. Jangan membagikan password atau kunci rahasia.</p></div></div>;
+  if (isPasswordRecovery) return <AuthLayout>
+    <div className="auth-content">
+      <div className="auth-eyebrow">PEMULIHAN AKUN</div>
+      <h2>Atur sandi baru</h2>
+      <p className="auth-description">Buat sandi baru untuk kembali masuk ke workspace keuangan Anda.</p>
+      <form onSubmit={e=>{e.preventDefault();void updatePassword();}}>
+        {authError&&<div className="notice error" role="alert">{authError}</div>}
+        <div className="field"><label htmlFor="new-password">Sandi baru</label><input id="new-password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} type="password" autoComplete="new-password" placeholder="Minimal 6 karakter" disabled={authSubmitting} required /></div>
+        <div className="field"><label htmlFor="confirm-password">Ulangi sandi baru</label><input id="confirm-password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} type="password" autoComplete="new-password" placeholder="Ketik ulang sandi baru" disabled={authSubmitting} required /></div>
+        <button className="btn btn-primary auth-submit" type="submit" disabled={authSubmitting}><Check size={16}/>{authSubmitting?'Menyimpan...':'Simpan sandi baru'}</button>
+      </form>
+      <p className="auth-footnote">Gunakan sandi yang kuat dan jangan bagikan kepada siapa pun.</p>
+    </div>
+  </AuthLayout>;
+  if (isSupabaseConfigured && authReady && userEmail==='Mode demo') return <AuthLayout>
+    <div className="auth-content">
+      {authMode==='forgot'&&<button className="auth-back-link" type="button" onClick={()=>{setAuthMode('login');setAuthError('');setAuthMessage('');}}><ArrowLeft size={15}/> Kembali ke login</button>}
+      <div className="auth-eyebrow">{authMode==='forgot'?'BANTUAN AKUN':authMode==='signup'?'BUAT AKUN ADMIN':'LOGIN ADMIN'}</div>
+      <h2>{authMode==='login'?'Selamat datang kembali':authMode==='signup'?'Buat akun DIGREVA':'Lupa sandi?'}</h2>
+      <p className="auth-description">{authMode==='forgot'?'Masukkan email akun Anda. Kami akan mengirim tautan aman untuk mengatur ulang sandi.':authMode==='signup'?'Daftarkan akun untuk mulai menggunakan workspace keuangan DIGREVA.':'Masuk untuk melihat dan mengelola workspace keuangan DIGREVA.'}</p>
+      {authError&&<div className="notice error" role="alert">{authError}</div>}
+      {authMessage&&<div className="notice auth-success" role="status"><Mail size={16}/><span>{authMessage}</span></div>}
+      <form onSubmit={e=>{e.preventDefault();void (authMode==='forgot'?requestPasswordReset():signIn());}}>
+        <div className="field"><label htmlFor="auth-email">Email admin</label><input id="auth-email" value={authEmail} onChange={e=>{setAuthEmail(e.target.value);setAuthError('');setAuthMessage('');}} type="email" autoComplete="email" placeholder="nama@email.com" disabled={authSubmitting} required /></div>
+        {authMode!=='forgot'&&<div className="field"><div className="auth-label-row"><label htmlFor="auth-password">Sandi</label>{authMode==='login'&&<button className="text-button" type="button" onClick={()=>{setAuthMode('forgot');setAuthError('');setAuthMessage('');}}>Lupa sandi?</button>}</div><input id="auth-password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} type="password" autoComplete={authMode==='login'?'current-password':'new-password'} placeholder={authMode==='signup'?'Minimal 6 karakter':'Masukkan sandi'} disabled={authSubmitting} required /></div>}
+        <button className="btn btn-primary auth-submit" type="submit" disabled={authSubmitting}>{authMode==='forgot'?<Mail size={16}/>:<LogIn size={16}/>} {authSubmitting?'Memproses...':authMode==='forgot'?(authMessage?'Kirim ulang tautan reset':'Kirim tautan reset'):authMode==='login'?'Masuk ke dashboard':'Buat akun'}</button>
+      </form>
+      {authMode!=='forgot'&&<div className="auth-switch">{authMode==='login'?'Belum punya akun?':'Sudah punya akun?'} <button className="text-button" type="button" disabled={authSubmitting} onClick={()=>{setAuthMode(authMode==='login'?'signup':'login');setAuthError('');setAuthMessage('');}}>{authMode==='login'?'Daftar sekarang':'Masuk'}</button></div>}
+      <p className="auth-footnote"><ShieldCheck size={13}/> Autentikasi aman melalui Supabase. Reset sandi dikirim ke email akun.</p>
+    </div>
+  </AuthLayout>;
 
   const title = NAV.find(n=>n.id===section)?.label || 'Dashboard';
   return <div className="shell">
-    <aside className="sidebar"><div className="brand"><div className="brand-mark">D</div><div><strong>DIGREVA Finance</strong><small>Finance Management System</small></div></div><div className="nav-label">Workspace</div>{NAV.map(n=>{const Icon=n.icon;return <button key={n.id} className={`nav-btn ${section===n.id?'active':''}`} onClick={()=>{setSection(n.id);setMobileNav(false);}}><Icon size={17}/>{n.label}</button>})}<div className="sidebar-foot"><div style={{display:'flex',alignItems:'center',gap:7,marginBottom:7}}><ShieldCheck size={14}/> {isSupabaseConfigured&&!isDemo?'Supabase terhubung':'Mode lokal'}</div>© {new Date().getFullYear()} DIGREVA<br/>Keuangan usaha lebih terkontrol.</div></aside>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark">D</div><div><strong>DIGREVA Finance</strong><small>Finance Management System</small></div></div><div className="nav-label">Workspace</div>{NAV.map(n=>{const Icon=n.icon;return <button key={n.id} className={`nav-btn ${section===n.id?'active':''}`} aria-current={section===n.id?'page':undefined} onClick={()=>{setSection(n.id);setMobileNav(false);}}><Icon size={17}/>{n.label}</button>})}<div className="sidebar-foot"><div className="connection-status"><span className={`connection-dot ${isSupabaseConfigured&&!isDemo?'online':''}`}/><span>{isSupabaseConfigured&&!isDemo?'Supabase terhubung':'Penyimpanan lokal'}</span></div><div className="sidebar-caption">© {new Date().getFullYear()} DIGREVA<br/>Keuangan usaha lebih terkontrol.</div></div></aside>
     {mobileNav&&<div className="modal-backdrop" onClick={()=>setMobileNav(false)}><div className="modal" style={{maxWidth:330}} onClick={e=>e.stopPropagation()}><div className="panel-head"><h3>Menu navigasi</h3><button className="btn" onClick={()=>setMobileNav(false)}><X size={15}/></button></div>{NAV.map(n=>{const Icon=n.icon;return <button key={n.id} className={`nav-btn ${section===n.id?'active':''}`} style={{color:'#334155'}} onClick={()=>{setSection(n.id);setMobileNav(false);}}><Icon size={17}/>{n.label}</button>})}</div></div>}
-    <main className="main"><header className="topbar"><div style={{display:'flex',alignItems:'center',gap:12}}><button className="btn mobile-menu" onClick={()=>setMobileNav(true)} aria-label="Buka menu"><Menu size={17}/></button><div><div className="crumb">DIGREVA / {title}</div><h1>{title}</h1></div></div><div style={{display:'flex',alignItems:'center',gap:13}}><div style={{textAlign:'right'}}><div style={{fontSize:12,fontWeight:700}}>{userEmail==='Mode demo'?'Workspace DIGREVA':userEmail}</div><div className="muted" style={{fontSize:10,marginTop:3}}>{isSupabaseConfigured&&!isDemo?'Database online':'Penyimpanan lokal'}</div></div>{isSupabaseConfigured&&<button className="btn" title="Logout" onClick={()=>void signOut()}><LogOut size={15}/></button>}<div className="avatar">D</div></div></header>
-    <div className="content">{notice&&<div className="notice" role="status" style={{display:'flex',justifyContent:'space-between',gap:10}}>{notice}<button onClick={()=>setNotice('')} aria-label="Tutup notifikasi"><X size={14}/></button></div>}{error&&<div className="notice error" role="alert" style={{display:'flex',justifyContent:'space-between',gap:10}}>{error}<button onClick={()=>setError('')} aria-label="Tutup pesan"><X size={14}/></button></div>}
+    <main className="main"><header className="topbar"><div className="topbar-title"><button className="btn mobile-menu" onClick={()=>setMobileNav(true)} aria-label="Buka menu"><Menu size={17}/></button><div><div className="crumb">DIGREVA <span>/</span> {title}</div><h1>{title}</h1></div></div><div className="topbar-account"><div className="account-identity"><div className="account-name">{userEmail==='Mode demo'?'Workspace DIGREVA':userEmail}</div><div className="account-meta">{isSupabaseConfigured&&!isDemo?'Database online':'Penyimpanan lokal'}</div></div>{isSupabaseConfigured&&<button className="btn logout-btn" title="Keluar" aria-label="Keluar" onClick={()=>void signOut()}><LogOut size={16}/></button>}<div className="avatar">D</div></div></header>
+    <div className="content">{notice&&<div className="notice" role="status" style={{display:'flex',justifyContent:'space-between',gap:10}}>{notice}<button onClick={()=>setNotice('')} aria-label="Tutup notifikasi"><X size={14}/></button></div>}{cloudLoadError&&<div className="notice error cloud-error" role="alert"><span>{cloudLoadError}</span><button className="btn" onClick={()=>void loadCloudData()} disabled={cloudLoading}>{cloudLoading?'Memuat...':'Coba lagi'}</button></div>}{error&&<div className="notice error" role="alert" style={{display:'flex',justifyContent:'space-between',gap:10}}>{error}<button onClick={()=>setError('')} aria-label="Tutup pesan"><X size={14}/></button></div>}
       {isDemo&&<div className="notice" style={{display:'flex',alignItems:'center',gap:9,background:'#fff7e6',color:'#8b5e12'}}><Activity size={15}/><span><strong>Data contoh aktif.</strong> Angka bertanda demo bukan data aktual DIGREVA. Data yang Anda input tersimpan di browser ini.</span><button className="btn" style={{marginLeft:'auto',whiteSpace:'nowrap'}} onClick={clearDemo}>Kosongkan demo</button></div>}
       {section==='dashboard'&&<>
         <div className="page-head"><div><h2>Ringkasan keuangan</h2><div className="muted small">Pantau kondisi keuangan DIGREVA secara menyeluruh.</div></div><div style={{display:'flex',gap:9,alignItems:'center'}}><input className="select-filter" type="month" value={monthFilter==='all'?'':monthFilter} onChange={e=>setMonthFilter(e.target.value||'all')} aria-label="Filter bulan"/><button className="btn btn-primary" onClick={openNewTransaction}><Plus size={15}/> Transaksi baru</button></div></div>
@@ -207,7 +479,7 @@ export default function Home() {
       {section==='invoices'&&<><div className="page-head"><div><h2>Invoice & piutang</h2><div className="muted small">Pantau nilai kontrak, pembayaran, dan tagihan yang belum lunas.</div></div><button className="btn btn-primary" onClick={()=>setSection('projects')}><FolderKanban size={15}/> Kelola proyek</button></div><div className="stats"><Stat title="Total piutang" value={idr(receivable)} icon={<ReceiptText size={17}/>} tone="negative"/><Stat title="Nilai kontrak" value={idr(projects.reduce((s,p)=>s+p.price,0))} icon={<FileText size={17}/>}/><Stat title="Pembayaran tercatat" value={idr(projects.reduce((s,p)=>s+p.paid,0))} icon={<Check size={17}/>} tone="positive"/><Stat title="Proyek belum lunas" value={String(projects.filter(p=>p.price>p.paid).length)} icon={<CalendarDays size={17}/>} /></div><section className="panel"><div className="panel-head"><div><h3>Daftar tagihan proyek</h3><p>Piutang dihitung dari harga proyek dikurangi pembayaran tercatat.</p></div></div><div className="table-wrap"><table><thead><tr><th>Proyek / Klien</th><th>Nilai kontrak</th><th>Terbayar</th><th>Sisa tagihan</th><th>Status</th><th>Jatuh tempo</th></tr></thead><tbody>{projects.map(p=><tr key={p.id}><td><div className="project-name">{p.name}</div><div className="muted small">{p.client||'Tanpa nama klien'}</div></td><td>{idr(p.price)}</td><td className="positive">{idr(p.paid)}</td><td className={p.price>p.paid?'negative':'positive'}>{idr(Math.max(0,p.price-p.paid))}</td><td><span className={`status-pill ${p.price<=p.paid?'pill-in':'pill-neutral'}`}>{p.price<=p.paid?'Lunas':p.status==='Dibatalkan'?'Dibatalkan':'Belum lunas'}</span></td><td>{shortDate(p.due)}</td></tr>)}</tbody></table>{projects.length===0&&<div className="empty">Belum ada proyek untuk ditagihkan.</div>}</div><p className="footer-note">Catatan: modul ini menampilkan ringkasan piutang proyek. Pembuatan PDF invoice dan alokasi pembayaran ke invoice per termin belum diimplementasikan dalam starter ini.</p></section></>}
       {section==='accounts'&&<><div className="page-head"><div><h2>Kas & rekening</h2><div className="muted small">Kelola akun uang dan pantau saldo pencatatan.</div></div><button className="btn btn-primary" onClick={()=>{setAccountForm({name:'',kind:'Rekening bank',opening:'0'});setAccountModal(true);}}><Plus size={15}/> Tambah akun</button></div><div className="stats"><Stat title="Total saldo tercatat" value={idr(cashBalance)} icon={<Wallet size={17}/>} tone="positive"/><Stat title="Total pemasukan sepanjang waktu" value={idr(totalIncome)} icon={<TrendingUp size={17}/>} tone="positive"/><Stat title="Total pengeluaran sepanjang waktu" value={idr(totalExpense)} icon={<TrendingDown size={17}/>} tone="negative"/><Stat title="Jumlah akun" value={String(accounts.length)} icon={<CircleDollarSign size={17}/>} /></div><div className="grid-two"><section className="panel"><div className="panel-head"><div><h3>Daftar akun</h3><p>Saldo = saldo awal + uang masuk − uang keluar.</p></div></div>{accounts.map(a=>{const b=accountBalances.find(x=>x.id===a.id);return <div key={a.id} style={{display:'flex',alignItems:'center',gap:13,padding:'15px 0',borderBottom:'1px solid #f0f2f6'}}><div className="stat-icon"><Wallet size={17}/></div><div style={{flex:1}}><div style={{fontWeight:700,fontSize:12}}>{a.name}</div><div className="muted small" style={{marginTop:4}}>{a.kind} · Saldo awal {idr(a.opening)}</div></div><strong style={{fontSize:14}}>{idr(b?.balance||0)}</strong></div>})}{accounts.length===0&&<div className="empty">Belum ada akun.</div>}</section><section className="panel"><div className="panel-head"><div><h3>Rekonsiliasi saldo</h3><p>Bandingkan saldo pencatatan dengan saldo aktual.</p></div></div><p className="muted small" style={{lineHeight:1.8}}>Saldo aktual belum terhubung otomatis ke bank. Masukkan saldo awal yang benar, lalu cocokkan secara manual dengan mutasi rekening dan kas. Transfer antar-akun belum tersedia di starter ini; jangan catat transfer sebagai pemasukan/pengeluaran karena akan memengaruhi laporan.</p><div className="notice" style={{marginTop:16}}>Integrasi bank otomatis tidak aktif. Semua angka berasal dari input pengguna.</div></section></div></>}
       {section==='reports'&&<><div className="page-head"><div><h2>Laporan keuangan</h2><div className="muted small">Ringkasan berdasarkan transaksi yang sudah dicatat.</div></div><div style={{display:'flex',gap:8}}><input className="select-filter" type="month" value={monthFilter==='all'?'':monthFilter} onChange={e=>setMonthFilter(e.target.value||'all')}/><button className="btn btn-primary" onClick={exportCSV}><Download size={14}/> Ekspor CSV</button></div></div><div className="report-cards" style={{marginBottom:18}}><div className="report-card"><label>Total pemasukan periode</label><strong className="positive">{idr(income)}</strong></div><div className="report-card"><label>Total pengeluaran periode</label><strong className="negative">{idr(expense)}</strong></div><div className="report-card"><label>Surplus / defisit kas</label><strong className={net>=0?'positive':'negative'}>{idr(net)}</strong></div><div className="report-card"><label>Total piutang proyek</label><strong>{idr(receivable)}</strong></div><div className="report-card"><label>Saldo akun tercatat</label><strong>{idr(cashBalance)}</strong></div><div className="report-card"><label>Biaya proyek yang diestimasi</label><strong>{idr(projects.reduce((s,p)=>s+p.cost,0))}</strong></div></div><div className="grid-two"><section className="panel"><div className="panel-head"><div><h3>Perbandingan keuangan</h3><p>Nilai dalam rupiah</p></div></div><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><BarChart data={[{name:'Pemasukan',amount:income},{name:'Pengeluaran',amount:expense},{name:'Selisih',amount:net}]}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#edf0f5"/><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:10}}/><YAxis axisLine={false} tickLine={false} tick={{fontSize:10}} tickFormatter={v=>v>=1000000?`${(v/1000000).toFixed(0)}jt`:v>=1000?`${(v/1000).toFixed(0)}rb`:String(v)}/><Tooltip formatter={(v:any)=>idr(Number(v))}/><Bar dataKey="amount" radius={[6,6,0,0]}>{[income,expense,net].map((v,i)=><Cell key={i} fill={i===0?'#16a36a':i===1?'#f07b88':v>=0?'#6c8ff0':'#dc4c64'}/>)}</Bar></BarChart></ResponsiveContainer></div></section><section className="panel"><div className="panel-head"><div><h3>Biaya per kategori</h3><p>Periode terpilih</p></div></div>{expenseCats.length?expenseCats.map(c=><div key={c.name} style={{marginBottom:15}}><div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:7}}><span>{c.name}</span><strong>{idr(c.value)}</strong></div><div className="progress"><span style={{width:`${Math.max(3,c.value/Math.max(...expenseCats.map(x=>x.value))*100)}%`}}/></div></div>):<div className="empty">Belum ada data biaya.</div>}</section></div><section className="panel"><div className="panel-head"><div><h3>Detail transaksi laporan</h3><p>Data yang sama dengan filter periode.</p></div></div><TransactionTable rows={monthTx} onEdit={openEditTransaction} onDelete={deleteTransaction}/></section><p className="footer-note">Laporan ini merupakan ringkasan kas berbasis transaksi. Laporan laba rugi akuntansi, pajak, pengakuan pendapatan, utang, dan ekspor Excel/PDF perlu disempurnakan sebelum digunakan sebagai laporan pembukuan resmi.</p></>}
-      {section==='settings'&&<><div className="page-head"><div><h2>Pengaturan</h2><div className="muted small">Konfigurasi dasar aplikasi DIGREVA Finance.</div></div></div><section className="settings-box"><h3>Profil aplikasi</h3><p>DIGREVA Finance Management System · Mata uang Rupiah (IDR) · Zona waktu Asia/Jakarta.</p></section><section className="settings-box"><h3>Status penyimpanan</h3><p>{isSupabaseConfigured&&!isDemo?'Supabase telah dikonfigurasi. Saat ini data transaksi dan proyek dapat dimuat dari database.':'Mode lokal: data disimpan di localStorage browser yang sedang digunakan. Data tidak tersinkron antarperangkat dan dapat hilang jika penyimpanan browser dihapus.'}</p><p>Untuk memakai Supabase, isi file <code>.env.local</code>, jalankan SQL pada folder <code>supabase</code>, lalu restart server Next.js.</p></section><section className="settings-box"><h3>Data demo</h3><p>Data demo membantu melihat tampilan awal aplikasi. Hapus data demo sebelum memasukkan data usaha asli agar laporan tidak tercampur.</p><button className="btn btn-danger" onClick={clearDemo}><Trash2 size={14}/> Hapus data contoh & mulai kosong</button></section><section className="settings-box"><h3>Catatan keamanan</h3><p>Jangan gunakan aplikasi untuk data keuangan sensitif sebelum konfigurasi autentikasi, RLS, backup, validasi akses, dan pengujian database selesai. Jangan letakkan service-role key Supabase di browser.</p></section></>}
+      {section==='settings'&&<><div className="page-head"><div><h2>Pengaturan</h2><div className="muted small">Konfigurasi dasar aplikasi DIGREVA Finance.</div></div></div><section className="settings-box"><h3>Profil aplikasi</h3><p>DIGREVA Finance Management System · Mata uang Rupiah (IDR) · Zona waktu Asia/Jakarta.</p></section><section className="settings-box"><h3>Status penyimpanan</h3><p>{cloudMode?'Data tersimpan di Supabase untuk akun yang sedang login.':'Mode lokal: data disimpan di localStorage browser yang sedang digunakan. Data tidak tersinkron antarperangkat dan dapat hilang jika penyimpanan browser dihapus.'}</p><p>Untuk memakai Supabase, isi file <code>.env.local</code>, jalankan SQL pada folder <code>supabase</code>, lalu restart server Next.js.</p></section><section className="settings-box"><h3>Data demo</h3><p>{cloudMode?'Workspace cloud aktif. Data demo tidak dapat menghapus data Supabase.':'Data demo membantu melihat tampilan awal aplikasi. Hapus data demo sebelum memasukkan data usaha asli agar laporan tidak tercampur.'}</p>{isDemo&&!cloudMode&&<button className="btn btn-danger" onClick={clearDemo}><Trash2 size={14}/> Hapus data contoh & mulai kosong</button>}</section><section className="settings-box"><h3>Catatan keamanan</h3><p>Jangan gunakan aplikasi untuk data keuangan sensitif sebelum konfigurasi autentikasi, RLS, backup, validasi akses, dan pengujian database selesai. Jangan letakkan service-role key Supabase di browser.</p></section></>}
     </div></main>
     {modalOpen&&<div className="modal-backdrop" onClick={()=>setModalOpen(false)}><div className="modal" onClick={e=>e.stopPropagation()}><div className="panel-head"><div><h2>{editingId?'Edit transaksi':'Tambah transaksi'}</h2><div className="modal-sub">Masukkan informasi sesuai bukti transaksi.</div></div><button className="btn" onClick={()=>setModalOpen(false)} aria-label="Tutup"><X size={16}/></button></div>{error&&<div className="notice error">{error}</div>}<div className="form-grid"><div className="field"><label>Jenis transaksi *</label><select value={form.type} onChange={e=>{const type=e.target.value as TxType;setForm({...form,type,category:type==='income'?INCOME_CATS[0]:EXPENSE_CATS[0]});}}><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select></div><div className="field"><label>Tanggal *</label><input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></div><div className="field span-two"><label>Keterangan *</label><input value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="Contoh: DP proyek website" autoFocus/></div><div className="field"><label>Nominal (Rp) *</label><input type="number" min="1" step="1" value={form.amount||''} onChange={e=>setForm({...form,amount:Number(e.target.value)})} placeholder="1200000"/></div><div className="field"><label>Kategori</label><select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{(form.type==='income'?INCOME_CATS:EXPENSE_CATS).map(c=><option key={c}>{c}</option>)}</select></div><div className="field"><label>Metode pembayaran</label><select value={form.method} onChange={e=>setForm({...form,method:e.target.value})}><option>Transfer bank</option><option>Tunai</option><option>E-wallet</option><option>Kartu debit/kredit</option><option>Lainnya</option></select></div><div className="field"><label>Akun kas / rekening</label><select value={form.account} onChange={e=>setForm({...form,account:e.target.value})}>{accounts.map(a=><option key={a.id}>{a.name}</option>)}{!accounts.some(a=>a.name===form.account)&&<option>{form.account}</option>}</select></div><div className="field"><label>Nama klien / penerima</label><input value={form.client} onChange={e=>setForm({...form,client:e.target.value})} placeholder="Nama klien (opsional)"/></div><div className="field"><label>Proyek terkait</label><select value={form.project} onChange={e=>setForm({...form,project:e.target.value})}><option value="">Tanpa proyek</option>{projects.map(p=><option key={p.id}>{p.name}</option>)}</select></div><div className="field span-two"><label>Nomor invoice / referensi</label><input value={form.reference} onChange={e=>setForm({...form,reference:e.target.value})} placeholder="INV-2026-001 (opsional)"/></div><div className="field span-two"><label>Catatan</label><textarea value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows={2} placeholder="Catatan tambahan (opsional)"/></div></div><div className="form-actions"><button className="btn" onClick={()=>setModalOpen(false)}>Batal</button><button className="btn btn-primary" onClick={()=>void saveTransaction()}><Check size={15}/> Simpan transaksi</button></div></div></div>}
     {accountModal&&<div className="modal-backdrop" onClick={()=>setAccountModal(false)}><div className="modal" style={{maxWidth:480}} onClick={e=>e.stopPropagation()}><div className="panel-head"><h2>Tambah akun kas/rekening</h2><button className="btn" onClick={()=>setAccountModal(false)}><X size={15}/></button></div>{error&&<div className="notice error">{error}</div>}<div className="form-grid"><div className="field span-two"><label>Nama akun *</label><input value={accountForm.name} onChange={e=>setAccountForm({...accountForm,name:e.target.value})} placeholder="Contoh: BCA Operasional"/></div><div className="field"><label>Jenis akun</label><select value={accountForm.kind} onChange={e=>setAccountForm({...accountForm,kind:e.target.value})}><option>Rekening bank</option><option>Kas tunai</option><option>Dompet digital</option><option>Lainnya</option></select></div><div className="field"><label>Saldo awal (Rp)</label><input type="number" value={accountForm.opening} onChange={e=>setAccountForm({...accountForm,opening:e.target.value})}/></div></div><div className="form-actions"><button className="btn" onClick={()=>setAccountModal(false)}>Batal</button><button className="btn btn-primary" onClick={()=>void addAccount()}><Check size={15}/> Simpan akun</button></div></div></div>}
